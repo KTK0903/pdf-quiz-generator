@@ -38,23 +38,32 @@ if "user_answers" not in st.session_state:
     st.session_state.user_answers = {}
 
 # PDF 파일 업로드
+# 2. PDFファイルのアップロード
 uploaded_file = st.file_uploader("クイズを生成するPDFファイルを選択してください", type=["pdf"])
 
 pdf_password = ""
 
 if uploaded_file:
     try:
-        reader = PdfReader(uploaded_file)
+        # 🔒 [모바일 에러 방지] 가상 메모리에 먼저 복사해서 안전하게 읽기
+        copied_file_check = io.BytesIO(uploaded_file.read())
+        reader = PdfReader(copied_file_check)
+        
         if reader.is_encrypted:
             st.warning("🔒 このPDFファイルは暗号化されています。パスワードを入力してください。")
             pdf_password = st.text_input("PDFパスワード入力", type="password")
+        
+        # ⚠️ 중요: 나중에 퀴즈 생성 함수에서 파일(uploaded_file)을 다시 읽을 수 있도록 포인터를 맨 앞으로 리셋
+        uploaded_file.seek(0)
     except Exception:
         pass
 
 # 고속 퀴즈 생성 함수
 def generate_quiz_from_pdf(pdf_file, password=""):
     try:
-        reader = PdfReader(pdf_file)
+        # 🔒 [모바일 에러 방지] 업로드된 파일을 가상 메모리(BytesIO)에 복사하여 안전하게 보존
+        copied_file = io.BytesIO(pdf_file.read())
+        reader = PdfReader(copied_file)
         
         if reader.is_encrypted:
             if not password:
