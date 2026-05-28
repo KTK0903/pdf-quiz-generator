@@ -81,7 +81,7 @@ def generate_quiz_from_pdf(pdf_file, password=""):
         status_text.info(f"📊 抽出完了: 全 {total_pages} ページ / 総文字数 約 {total_chars:,} 字。")
 
         # 🚀 고성능 차세대 고속 엔진 지정
-        FAST_ACCEL_MODEL = 'gemini-2.5-flash'
+        FAST_ACCEL_MODEL = 'gemini-2.5-flash-lite'
 
         # STEP 1: 핵심 테마 고속 추출
         status_text.info("🔍 STEP 1: ドキュメント全体の独立したテーマ・概念を高速分析中...")
