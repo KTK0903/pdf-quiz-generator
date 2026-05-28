@@ -8,8 +8,7 @@ import io
 import os
 
 # 인코딩 관련 속도 저하 및 에러 방지
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
-sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
+
 os.environ["PYTHONIOENCODING"] = "utf-8"
 
 # Streamlit Cloud 비밀 금고에서 안전하게 API 키 로드
