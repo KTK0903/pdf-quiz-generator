@@ -14,18 +14,18 @@ os.environ["PYTHONIOENCODING"] = "utf-8"
 try:
     GOOGLE_API_KEY = st.secrets["GOOGLE_API_KEY"]
 except KeyError:
-    st.error("❌ 'GOOGLE_API_KEY'가 Streamlit 설정에 등록되지 않았습니다. Secrets 설정을 확인해주세요.")
+    st.error("❌ 'GOOGLE_API_KEY'가 Streamlit 설정に登録されていません。Secrets設定を確認してください。")
     st.stop()
 
 # 최신 구글 GenAI SDK 클라이언트 초기화
 client = genai.Client(api_key=GOOGLE_API_KEY)
 
-# 2026년 기준 대용량 처리 및 유료 결제 환경에서 가장 빠르고 안정적인 모델 선정
-FAST_ACCEL_MODEL = 'gemini-2.5-flash-lite'
+# 👑 유료 결제 버프를 100% 활용하는 대용량 전용 오리지널 2.5 Flash 모델 고정
+FAST_ACCEL_MODEL = 'gemini-2.5-flash'
 
-# 웹ページ 기본 설정
+# 웹페이지 기본 설정
 st.set_page_config(page_title="PDF AI クイズ生成器", layout="centered")
-st.title("📚 PDFベース AIクイズ生成器 (高速・高精度版)")
+st.title("📚 PDFベース AIクイズ生成器 (テーマ別大量生成版)")
 
 # 📢 디스클레이머(Disclaimer) 및 이용 안내 섹션
 st.info("""
@@ -35,7 +35,7 @@ st.info("""
 * **対応ファイル:** テキストデータが含まれるPDFに対応しています。文字が画像化されているスキャンPDFの場合、正常にテキストを読み取れないことがあります。
 """)
 
-st.write("PDFファイルをアップロードすると、AIが内容を分析して各重要テーマごとに2問ずつクイズを自動生成します。")
+st.write("PDFファイルをアップロードすると、AIが内容から重要なテーマを網羅的に自動抽出し、各テーマごとに2問以上ずつクイズを限界まで自動生成します。")
 
 # 2. PDFファイルのアップロード
 uploaded_file = st.file_uploader("クイズを生成するPDFファイルを選択してください", type=["pdf"])
@@ -89,35 +89,38 @@ def generate_quiz_from_pdf(pdf_file, password=""):
             st.error("❌ PDFからテキストを抽出できませんでした。スキャンされた画像PDFの可能性があります。")
             return None
 
-        # STEP 2: Gemini API를 사용하여 테마 분석 및 테마별 2문항씩 퀴즈 생성
-        status_text.text("🧠 AIが重要テーマを自動分析し、各テーマ2問ずつクイズを構築しています...")
+        # STEP 2: 개수 제한 없는 오리지널 대용량 동적 테마별 생성 프롬프트
+        status_text.text("🧠 AIが本文全体を網羅的に分析し、すべての重要テーマを抽出して各2問以上ずつクイズを生成しています...")
         progress_bar.progress(50)
 
         prompt = f"""
-        以下のテキスト内容を徹底的に分析し、まず重要なコアテーマ（トピック）を複数抽出してください。
-        その後、抽出した【各重要テーマごとに必ず2問ずつ】の客観的な4択クイズを作成してください。
-        出力は必ず指定されたJSONフォーマットの構造のみにしてください。他の説明文やバッククォート(```)は一切含めないでください。
+        提供されたテキスト内容全体を網羅的に分析し、重要なコアテーマ（章、トピック、概念）を【制限なく可能な限り多く】抽出してください。
+        そして、抽出した【すべての重要テーマごとに、それぞれ異なる角度から必ず2問以上ずつ】客観的な4択クイズを作成してください。
+        
+        全体の総問題数に上限は設けません。テキストの量が多い場合は、テーマ数を増やして比例して全体のクイズ数が多くなるように（例：テーマが7つなら14問以上、10個なら20問以上）徹底的に出題してください。
+        出力は必ず指定されたJSONフォーマットの構造のみにしてください。他の説明文やマークダウンのバッククォート(```)は一切含めないでください。
 
         【テキスト内容】:
         {full_text}
         """
 
-        # JSON 출력을 강제하고 동적 테마별 문제를 받아내는 구조화 설정
+        # JSON 출력을 강제하고 동적 테마별 다문항을 받아내는 구조화 설정
         response = client.models.generate_content(
             model=FAST_ACCEL_MODEL,
             contents=prompt,
             config={
                 "response_mime_type": "application/json",
                 "system_instruction": """
-                あなたは優秀な教育専門家です。提供されたテキストから重要なテーマを自動で抽出し、
-                それぞれのテーマごとに異なる角度から2問ずつ問題を出題してください（例：テーマが3つなら計6問、5つなら計10問）。
+                あなたは妥協を許さない優秀な教育専門家です。提供されたテキストの全範囲を漏れなくカバーしてください。
+                本文から抽出できる重要なテーマや概念をすべて洗い出し、それぞれのテーマ（theme）ごとに【必ず2問以上ずつ】の4択クイズを出力してください。
+                問題数を意図的に間引いたり、10問程度に省略したりすることは絶対に許されません。見つかったすべての重要トピックについて、深い理解を問う問題を各2問以上網羅した膨大な問題セットを構築してください。
                 
                 必ず以下のJSONフォーマットの構造に従って出力してください。
                 
                 {
                   "quizzes": [
                     {
-                      "theme": "抽出した重要テーマ名",
+                      "theme": "抽出した重要テーマ・章の名前",
                       "number": 1,
                       "question": "問題文",
                       "options": ["選択肢1", "選択肢2", "選択肢3", "選択肢4"],
@@ -146,9 +149,8 @@ def generate_quiz_from_pdf(pdf_file, password=""):
 
 # 4. 화면 UI 및 실행 로직
 if uploaded_file:
-    if st.button("✨ AIクイズを生成する", type="primary"):
+    if st.button("✨ AIクイズを自動生成する", type="primary"):
         with st.spinner("생성 중..."):
-            # 이전 퀴즈 기록 초기화
             if "generated_quizzes" in st.session_state:
                 del st.session_state["generated_quizzes"]
                 
@@ -166,7 +168,7 @@ if "generated_quizzes" in st.session_state:
     current_theme = ""
     for idx, q in enumerate(st.session_state["generated_quizzes"]):
         # 테마가 바뀔 때마다 화면에 테마 헤더 출력
-        quiz_theme = q.get('theme', '一般')
+        quiz_theme = q.get('theme', '総合')
         if quiz_theme != current_theme:
             current_theme = quiz_theme
             st.markdown(f"### 📌 テーマ: {current_theme}")
