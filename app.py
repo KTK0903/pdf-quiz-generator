@@ -23,11 +23,11 @@ client = genai.Client(api_key=GOOGLE_API_KEY)
 # 2026년 기준 대용량 처리 및 유료 결제 환경에서 가장 빠르고 안정적인 모델 선정
 FAST_ACCEL_MODEL = 'gemini-2.5-flash-lite'
 
-# 웹페이지 기본 설정
+# 웹ページ 기본 설정
 st.set_page_config(page_title="PDF AI クイズ生成器", layout="centered")
 st.title("📚 PDFベース AIクイズ生成器 (高速・高精度版)")
 
-# 📢 디스클레이머(Disclaimer) 및 이용 안내 섹션 부활!
+# 📢 디스클레이머(Disclaimer) 및 이용 안내 섹션
 st.info("""
 ### 📢 ご利用に関する注意事項 (Disclaimer)
 * **データの取り扱い:** アップロードされたPDFファイルは、クイズ生成の目的のみに一時的に使用され、サーバーに永久保存されることはありません。
@@ -35,7 +35,7 @@ st.info("""
 * **対応ファイル:** テキストデータが含まれるPDFに対応しています。文字が画像化されているスキャンPDFの場合、正常にテキストを読み取れないことがあります。
 """)
 
-st.write("PDFファイルをアップロードすると、AIが内容を分析して4択クイズを自動生成します。")
+st.write("PDFファイルをアップロードすると、AIが内容を分析して各重要テーマごとに2問ずつクイズを自動生成します。")
 
 # 2. PDFファイルのアップロード
 uploaded_file = st.file_uploader("クイズを生成するPDFファイルを選択してください", type=["pdf"])
@@ -89,29 +89,39 @@ def generate_quiz_from_pdf(pdf_file, password=""):
             st.error("❌ PDFからテキストを抽出できませんでした。スキャンされた画像PDFの可能性があります。")
             return None
 
-        # STEP 2: Gemini API를 사용하여 퀴즈 생성 (JSON 구조 지정)
-        status_text.text("🧠 AIが重要テーマを分析し、クイズを構築しています (30秒〜1分ほどかかります)...")
+        # STEP 2: Gemini API를 사용하여 테마 분석 및 테마별 2문항씩 퀴즈 생성
+        status_text.text("🧠 AIが重要テーマを自動分析し、各テーマ2問ずつクイズを構築しています...")
         progress_bar.progress(50)
 
-        prompt = f"以下のテキスト内容に基づいて、客観적인 4択クイズを5問作成し、必ず指定されたJSONフォーマットでのみ出力してください。\n\n【テキスト内容】:\n{full_text}"
+        prompt = f"""
+        以下のテキスト内容を徹底的に分析し、まず重要なコアテーマ（トピック）を複数抽出してください。
+        その後、抽出した【各重要テーマごとに必ず2問ずつ】の客観的な4択クイズを作成してください。
+        出力は必ず指定されたJSONフォーマットの構造のみにしてください。他の説明文やバッククォート(```)は一切含めないでください。
 
-        # JSON 출력을 강제하는 최신 구조화 설정 적용
+        【テキスト内容】:
+        {full_text}
+        """
+
+        # JSON 출력을 강제하고 동적 테마별 문제를 받아내는 구조화 설정
         response = client.models.generate_content(
             model=FAST_ACCEL_MODEL,
             contents=prompt,
             config={
                 "response_mime_type": "application/json",
                 "system_instruction": """
-                あなたは優秀な教育専門家です。提供されたテキストの核心的な概念から重要な問題を5문항 출제してください。
-                必ず以下のJSONフォーマットの構造に従って出力してください。他の説明文やマークダウンのバッククォート(```)は一切含めないでください。
+                あなたは優秀な教育専門家です。提供されたテキストから重要なテーマを自動で抽出し、
+                それぞれのテーマごとに異なる角度から2問ずつ問題を出題してください（例：テーマが3つなら計6問、5つなら計10問）。
+                
+                必ず以下のJSONフォーマットの構造に従って出力してください。
                 
                 {
                   "quizzes": [
                     {
+                      "theme": "抽出した重要テーマ名",
                       "number": 1,
                       "question": "問題文",
                       "options": ["選択肢1", "選択肢2", "選択肢3", "選択肢4"],
-                      "answer": "正解の選択肢(optionsの中의 文字列と完全一致するもの)",
+                      "answer": "正解の選択肢(optionsの中の文字列と完全一致するもの)",
                       "explanation": "解説文"
                     }
                   ]
@@ -138,18 +148,29 @@ def generate_quiz_from_pdf(pdf_file, password=""):
 if uploaded_file:
     if st.button("✨ AIクイズを生成する", type="primary"):
         with st.spinner("생성 중..."):
+            # 이전 퀴즈 기록 초기화
+            if "generated_quizzes" in st.session_state:
+                del st.session_state["generated_quizzes"]
+                
             quizzes = generate_quiz_from_pdf(uploaded_file, pdf_password)
             
             if quizzes:
                 st.session_state["generated_quizzes"] = quizzes
-                st.success("✅ クイズが正常に生成されました！")
+                st.success(f"✅ クイズが正常に生成されました！(計 {len(quizzes)} 問)")
 
 # 5. 생성된 퀴즈 화면에 출력
 if "generated_quizzes" in st.session_state:
     st.write("---")
     st.header("📝 生成されたクイズ")
     
+    current_theme = ""
     for idx, q in enumerate(st.session_state["generated_quizzes"]):
+        # 테마가 바뀔 때마다 화면에 테마 헤더 출력
+        quiz_theme = q.get('theme', '一般')
+        if quiz_theme != current_theme:
+            current_theme = quiz_theme
+            st.markdown(f"### 📌 テーマ: {current_theme}")
+            
         st.subheader(f"Q{idx+1}. {q.get('question')}")
         
         # 라디오 버튼을 이용한 문제 출제
