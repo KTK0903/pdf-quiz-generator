@@ -7,37 +7,27 @@ import sys
 import io
 import os
 
-# 인코딩 관련 속도 저하 및 에러 방지
-
+# 시스템 인코딩 UTF-8 강제 설정 (Streamlit Cloud 환경 최적화)
 os.environ["PYTHONIOENCODING"] = "utf-8"
 
-# Streamlit Cloud 비밀 금고에서 안전하게 API 키 로드
-GOOGLE_API_KEY = st.secrets["GOOGLE_API_KEY"]
-
+# 1. API 키 설정 (Streamlit Cloud Secrets 보안 권장 방식)
 try:
-    client = genai.Client(api_key=GOOGLE_API_KEY)
-except Exception as e:
-    st.error(f"APIキーの初期化に失敗しました。キーを確認してください: {e}")
+    GOOGLE_API_KEY = st.secrets["GOOGLE_API_KEY"]
+except KeyError:
+    st.error("❌ 'GOOGLE_API_KEY'가 Streamlit 설정에 등록되지 않았습니다. Secrets 설정을 확인해주세요.")
+    st.stop()
 
-st.set_page_config(page_title="AIクイズ生成器", page_icon="📚", layout="centered")
+# 최신 구글 GenAI SDK 클라이언트 초기화
+client = genai.Client(api_key=GOOGLE_API_KEY)
+
+# 2026년 기준 대용량 처리 및 유료 결제 환경에서 가장 빠르고 안정적인 모델 선정
+FAST_ACCEL_MODEL = 'gemini-2.5-flash-lite'
+
+# 웹페이지 기본 설정
+st.set_page_config(page_title="PDF AI クイズ生成器", layout="centered")
 st.title("📚 PDFベース AIクイズ生成器 (高速・高精度版)")
-st.write("30万字を超える長大なドキュメントも、**全ページを完全に解析**して漏れなくテーマを認識し、各テーマから最低2問ずつのクイズを生成します。")
+st.write("PDFファイルをアップロードすると、AIが内容を分析して4択クイズを自動生成します。")
 
-# ⚠️ 저작권 및 보안 Disclaimer 경고창
-st.warning("""
-**⚠️ 【ご利用上の注意 / Disclaimer】**
-1. **著作権の遵守:** アップロードするPDFファイルは、必ず**著作権法を侵害しないもの**（ご自身が所有する資料、パブリックドメイン、または利用許諾を得たもの）に限ります。著作権で保護された教科書や書籍、他人の論文などを無断でアップロードしないでください。
-2. **データの保護:** 本システムに入力されたデータは、AIモデルの性能向上のために使用される場合があります。個人情報や機密情報が含まれるファイルはアップロードしないでください。
-*※万が一、著作権侵害等のトラブルが発生した場合、開発者は一切の責任を負いかねます。*
-""")
-
-# 세션 상태 초기화
-if "quiz_data" not in st.session_state:
-    st.session_state.quiz_data = None
-if "user_answers" not in st.session_state:
-    st.session_state.user_answers = {}
-
-# PDF 파일 업로드
 # 2. PDFファイルのアップロード
 uploaded_file = st.file_uploader("クイズを生成するPDFファイルを選択してください", type=["pdf"])
 
@@ -45,24 +35,21 @@ pdf_password = ""
 
 if uploaded_file:
     try:
-        # 🔒 [모바일 에러 방지] 가상 메모리에 먼저 복사해서 안전하게 읽기
-        copied_file_check = io.BytesIO(uploaded_file.read())
+        # 🔒 [모바일 에러 방지] 커서를 건드리지 않는 getvalue()를 사용하여 가상 메모리에 복사
+        copied_file_check = io.BytesIO(uploaded_file.getvalue())
         reader = PdfReader(copied_file_check)
         
         if reader.is_encrypted:
             st.warning("🔒 このPDFファイルは暗号化されています。パスワードを入力してください。")
             pdf_password = st.text_input("PDFパスワード入力", type="password")
-        
-        # ⚠️ 중요: 나중에 퀴즈 생성 함수에서 파일(uploaded_file)을 다시 읽을 수 있도록 포인터를 맨 앞으로 리셋
-        uploaded_file.seek(0)
     except Exception:
         pass
 
-# 고속 퀴즈 생성 함수
+# 3. クイズ生成関数
 def generate_quiz_from_pdf(pdf_file, password=""):
     try:
-        # 🔒 [모바일 에러 방지] 업로드된 파일을 가상 메모리(BytesIO)에 복사하여 안전하게 보존
-        copied_file = io.BytesIO(pdf_file.read())
+        # 🔒 [모바일 안전장치] 원본 데이터를 안전하게 가상 메모리로 가져와 가로채기 방지
+        copied_file = io.BytesIO(pdf_file.getvalue())
         reader = PdfReader(copied_file)
         
         if reader.is_encrypted:
@@ -75,130 +62,99 @@ def generate_quiz_from_pdf(pdf_file, password=""):
                 st.error("❌ パスワードが間違っています。再確認してください。")
                 return None
 
-        # 텍스트 추출 가속화
-        pages_text = [page.extract_text().strip() for page in reader.pages if page.extract_text() and page.extract_text().strip()]
+        # STEP 1: 전체 PDF에서 텍스트 추출
+        progress_bar = st.progress(0)
+        status_text = st.empty()
         
-        total_pages = len(pages_text)
-        if total_pages == 0:
-            st.error("❌ PDFからテキストを抽出できませんでした。")
+        status_text.text("📖 PDFからテキストを抽出しています...")
+        full_text = ""
+        total_pages = len(reader.pages)
+        
+        for i, page in enumerate(reader.pages):
+            text = page.extract_text()
+            if text:
+                full_text += text + "\n"
+            progress_bar.progress(int((i + 1) / total_pages * 100))
+            
+        if not full_text.strip():
+            st.error("❌ PDFからテキストを抽出できませんでした。スキャンされた画像PDFの可能性があります。")
             return None
 
-        full_text = "\n\n".join(pages_text)
-        total_chars = len(full_text)
-        
-        status_text = st.empty()
-        status_text.info(f"📊 抽出完了: 全 {total_pages} ページ / 総文字数 約 {total_chars:,} 字。")
+        # STEP 2: Gemini API를 사용하여 퀴즈 생성 (JSON 구조 지정)
+        status_text.text("🧠 AIが重要テーマを分析し、クイズを構築しています (30秒〜1分ほどかかります)...")
+        progress_bar.progress(50)
 
-        # 🚀 고성능 차세대 고속 엔진 지정
-        FAST_ACCEL_MODEL = 'gemini-2.5-flash-lite'
+        prompt = f"以下のテキスト内容に基づいて、客観的な4択クイズを5問作成し、必ず指定されたJSONフォーマットでのみ出力してください。\n\n【テキスト内容】:\n{full_text}"
 
-        # STEP 1: 핵심 테마 고속 추출
-        status_text.info("🔍 STEP 1: ドキュメント全体の独立したテーマ・概念を高速分析中...")
-        
-        theme_prompt = f"""
-        あなたは非常に優秀なデータアナリストであり教育専門家です。
-        提供されたテキストは、文字数が約30万字に及ぶ非常に長大で専門的なドキュメント全体です。
-        データの最初から最後までを完全に読み込み、省略することなく、このドキュメントに存在する重要な【独立した主要テーマや核心概念】を漏れなくすべて抽出してください。
-        後半に登場する重要な概念が無視されないよう、全体から均等かつ網羅的に抽出し、それぞれについて日本語で3文程度で要約・説明してください。数量制限はありません。すべて挙げてください。
-
-        [超大容量テキスト内容]
-        {full_text}
-        """
-        
-        theme_response = client.models.generate_content(
+        # JSON 출력을 강제하는 최신 구조화 설정 적용
+        response = client.models.generate_content(
             model=FAST_ACCEL_MODEL,
-            contents=theme_prompt,
+            contents=prompt,
+            config={
+                "response_mime_type": "application/json",
+                "system_instruction": """
+                あなたは優秀な教育専門家です。提供されたテキストの核心的な概念から重要な問題を5문항 출제してください。
+                必ず以下のJSONフォーマットの構造に従って出力してください。他の説明文やマークダウンのバッククォート(```)は一切含めないでください。
+                
+                {
+                  "quizzes": [
+                    {
+                      "number": 1,
+                      "question": "問題文",
+                      "options": ["選択肢1", "選択肢2", "選択肢3", "選択肢4"],
+                      "answer": "正解の選択肢(optionsの中の文字列と完全一致するもの)",
+                      "explanation": "解説文"
+                    }
+                  ]
+                }
+                """
+            }
         )
-        extracted_themes = theme_response.text
-        
-        # STEP 2: 추출된 테마를 기반으로 퀴즈 빌드
-        status_text.info("📝 STEP 2: 各テーマから最低2問ずつ、深掘りクイズを高速構築中...")
-        
-        quiz_prompt = f"""
-        あなたは教育の専門家です。以下の【分析された主要テーマ・概念】のリストをベースにクイズを作成してください。
-        
-        【重要指示】
-        1. 提示された【すべてのテーマ】を一つも漏らすことなく対象にしてください。
-        2. 【各テーマごとに必ず最低2問以上】の客観式4択クイズを作成してください。
-        3. 必ず【日本語】で作成し、出力は以下のJSON形式のみを返してください。解説（explanation）も含めてください。マークダウン（```jsonなど）や他の説明は絶対に含めないでください。
 
-        [形式]
-        [
-          {{
-            "question": "問題文",
-            "options": ["選択肢1", "選択肢2", "選択肢3", "選択肢4"],
-            "answer": "正解의 문자열 (optionsにある文字列と完全に一致させること)",
-            "explanation": "解説内容"
-          }}
-        ]
-
-        [分析された主要テーマ・概念]
-        {extracted_themes}
-        """
-        
-        quiz_response = client.models.generate_content(
-            model=FAST_ACCEL_MODEL,
-            contents=quiz_prompt,
-        )
+        progress_bar.progress(100)
         status_text.empty()
         
-        # JSON 정제 및 로딩
-        cleaned_text = quiz_response.text.strip().replace("```json", "").replace("```", "")
-        quiz_json = json.loads(cleaned_text)
-        
-        st.success(f"📊 分析完了！計 {len(quiz_json)} 問の深掘りクイズが完成しました。")
-        return quiz_json
+        # 결과 JSON 파싱
+        quiz_data = json.loads(response.text)
+        return quiz_data.get("quizzes", [])
 
-    except FileNotDecryptedError:
-        st.error("❌ PDFファイルがロックされています。正しいパスワードを入力してください。")
+    except json.JSONDecodeError:
+        st.error("❌ AIの出力データをパースできませんでした。もう一度お試しください。")
         return None
     except Exception as e:
-        st.error(f"クイズ生成中にエラーが発生しました: {str(e)}")
+        st.error(f"❌ クイズ生成中にエラーが発生しました: {e}")
         return None
 
-# 퀴즈 생성 버튼 클릭 시
+# 4. 화면 UI 및 실행 로직
 if uploaded_file:
-    if st.button("✨ AIクイズを生成する"):
-        with st.spinner("Geminiがドキュメント全体を高速網羅し、クイズを作成しています..."):
-            st.session_state.quiz_data = generate_quiz_from_pdf(uploaded_file, pdf_password)
-            st.session_state.user_answers = {}
+    if st.button("✨ AIクイズを生成する", type="primary"):
+        with st.spinner("생성 중..."):
+            quizzes = generate_quiz_from_pdf(uploaded_file, pdf_password)
+            
+            if quizzes:
+                st.session_state["generated_quizzes"] = quizzes
+                st.success("✅ クイズが正常に生成されました！")
 
-# 4. 퀴즈 화면 출력
-if st.session_state.quiz_data:
+# 5. 생성된 퀴즈 화면에 출력
+if "generated_quizzes" in st.session_state:
     st.write("---")
-    st.header("📝 クイズに挑戦")
+    st.header("📝 生成されたクイズ")
     
-    for idx, item in enumerate(st.session_state.quiz_data):
-        st.subheader(f"Q{idx+1}. {item['question']}")
-        user_choice = st.radio(
-            f"選択肢を選んでください (Q{idx+1})", 
-            item['options'], 
-            key=f"q_{idx}",
-            index=None,
-            label_visibility="collapsed"
-        )
-        st.session_state.user_answers[idx] = user_choice
-        st.write("")
-
-    if st.button("💯 採点する"):
-        st.write("---")
-        st.header("📊 採点結果")
+    for idx, q in enumerate(st.session_state["generated_quizzes"]):
+        st.subheader(f"Q{idx+1}. {q.get('question')}")
         
-        correct_count = 0
-        for idx, item in enumerate(st.session_state.quiz_data):
-            user_ans = st.session_state.user_answers.get(idx)
-            actual_ans = item['answer']
+        # 라디오 버튼을 이용한 문제 출제
+        options = q.get("options", [])
+        user_ans = st.radio(f"選択肢を選んでください (Q{idx+1})", options, key=f"q_{idx}")
+        
+        # 정답 확인 확장 레이아웃
+        with st.expander("👁️ 正解と解説を確認する"):
+            correct_ans = q.get("answer")
+            st.write(f"**💡 正解:** {correct_ans}")
+            st.write(f"**📖 解説:** {q.get('explanation')}")
             
-            st.markdown(f"**Q{idx+1}. {item['question']}**")
-            st.write(f"あなたの解答: {user_ans if user_ans else '未選択'}")
-            
-            if user_ans == actual_ans:
-                st.success("🎉 正解です！")
-                correct_count += 1
+            if user_ans == correct_ans:
+                st.success("🎯 正解です！")
             else:
-                st.error(f"❌ 不正解です。 (正解: {actual_ans})")
-            
-            st.info(f"💡 解説: {item['explanation']}")
-            st.write("")
-            
-        st.metric(label="総合スコア", value=f"{correct_count} / {len(st.session_state.quiz_data)} 問正解")
+                st.info("✍️ もう一度考えてみましょう。")
+        st.write("")
