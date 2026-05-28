@@ -26,6 +26,15 @@ FAST_ACCEL_MODEL = 'gemini-2.5-flash-lite'
 # 웹페이지 기본 설정
 st.set_page_config(page_title="PDF AI クイズ生成器", layout="centered")
 st.title("📚 PDFベース AIクイズ生成器 (高速・高精度版)")
+
+# 📢 디스클레이머(Disclaimer) 및 이용 안내 섹션 부활!
+st.info("""
+### 📢 ご利用に関する注意事項 (Disclaimer)
+* **データの取り扱い:** アップロードされたPDFファイルは、クイズ生成の目的のみに一時的に使用され、サーバーに永久保存されることはありません。
+* **AI出力の特性:** AIの性質上、クイズの解説や正解に極稀に誤りが含まれる場合があります。重要な学習の際は、必ず元のPDF教材と照らし合わせてご確認ください。
+* **対応ファイル:** テキストデータが含まれるPDFに対応しています。文字が画像化されているスキャンPDFの場合、正常にテキストを読み取れないことがあります。
+""")
+
 st.write("PDFファイルをアップロードすると、AIが内容を分析して4択クイズを自動生成します。")
 
 # 2. PDFファイルのアップロード
@@ -84,7 +93,7 @@ def generate_quiz_from_pdf(pdf_file, password=""):
         status_text.text("🧠 AIが重要テーマを分析し、クイズを構築しています (30秒〜1分ほどかかります)...")
         progress_bar.progress(50)
 
-        prompt = f"以下のテキスト内容に基づいて、客観的な4択クイズを5問作成し、必ず指定されたJSONフォーマットでのみ出力してください。\n\n【テキスト内容】:\n{full_text}"
+        prompt = f"以下のテキスト内容に基づいて、客観적인 4択クイズを5問作成し、必ず指定されたJSONフォーマットでのみ出力してください。\n\n【テキスト内容】:\n{full_text}"
 
         # JSON 출력을 강제하는 최신 구조화 설정 적용
         response = client.models.generate_content(
@@ -102,7 +111,7 @@ def generate_quiz_from_pdf(pdf_file, password=""):
                       "number": 1,
                       "question": "問題文",
                       "options": ["選択肢1", "選択肢2", "選択肢3", "選択肢4"],
-                      "answer": "正解の選択肢(optionsの中の文字列と完全一致するもの)",
+                      "answer": "正解の選択肢(optionsの中의 文字列と完全一致するもの)",
                       "explanation": "解説文"
                     }
                   ]
